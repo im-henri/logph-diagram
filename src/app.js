@@ -459,6 +459,26 @@ function rebuildTable() {
       }
       inP.value = fmt(Pbar, 2);
 
+      // Convenience: keep paired pressures equal when the paired point is still blank.
+      // P1 <-> P4 and P2 <-> P3 (only if the paired point has no P and no T).
+      if (source === "p") {
+        const pair = i === 0 ? 3 : i === 3 ? 0 : i === 1 ? 2 : i === 2 ? 1 : -1;
+        if (pair >= 0) {
+          const pj = points[pair];
+          const hasP = Number.isFinite(pj?.Pbar) && pj.Pbar > 0;
+          const hasT = Number.isFinite(pj?.Tc);
+          if (!hasP && !hasT) {
+            const pairDefaultPhase = pair === 3 ? "2p" : "auto";
+            bumpSeq(pair);
+            points[pair] = {
+              ...(pj || { Pbar: NaN, h: NaN, Tc: NaN, x: NaN, phase: pairDefaultPhase }),
+              Pbar,
+              phase: pj?.phase || pairDefaultPhase,
+            };
+          }
+        }
+      }
+
       // Resolve from whichever pair the user is defining.
       // - If user changed T (or P/phase with T present): solve h from (T,P)
       // - If user changed h (or P with h present and T missing): solve T from (h,P)

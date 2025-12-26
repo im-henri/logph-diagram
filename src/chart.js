@@ -320,7 +320,8 @@ export function createChart(svg) {
 
       if (!isPlaceholder) {
         // value label: place in a non-overlapping position with a leader line.
-        const g = el("g");
+        // pointer-events:none so you can always click/drag the point even if the label overlaps.
+        const g = el("g", { "pointer-events": "none" });
         const leader = el("line", { class: "valueLeader" });
         const rect = el("rect", { rx: 6, ry: 6, class: "valueLabelBg", filter: `url(#${state.tooltipFilterId})` });
         const text = el("text", { class: "valueLabel" });
