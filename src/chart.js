@@ -18,6 +18,7 @@ export function createChart(svg) {
     fg: null,
     clipId,
     clipRect: null,
+    tooltipFilterId: null,
   };
 
   svg.innerHTML = "";
@@ -26,6 +27,17 @@ export function createChart(svg) {
   state.clipRect = el("rect", { x: 0, y: 0, width: 0, height: 0 });
   clipPath.appendChild(state.clipRect);
   defs.appendChild(clipPath);
+
+  // Slight blur for tooltip background boxes (rect only; text stays crisp).
+  state.tooltipFilterId = `tooltipBlur_${clipId}`;
+  const tipFilter = el("filter", { id: state.tooltipFilterId, x: "-20%", y: "-20%", width: "140%", height: "140%" });
+  tipFilter.appendChild(el("feGaussianBlur", { in: "SourceGraphic", stdDeviation: "0.8", result: "blur" }));
+  const merge = el("feMerge");
+  merge.appendChild(el("feMergeNode", { in: "blur" }));
+  merge.appendChild(el("feMergeNode", { in: "SourceGraphic" }));
+  tipFilter.appendChild(merge);
+  defs.appendChild(tipFilter);
+
   svg.appendChild(defs);
 
   state.bg = el("g");
@@ -106,7 +118,7 @@ export function createChart(svg) {
     return v.toFixed(3);
   }
 
-  function drawAxes() {
+  function drawAxes({ showTitles = true } = {}) {
     const { width, height, pad } = state;
     const x0 = pad.l,
       x1 = width - pad.r;
@@ -137,12 +149,14 @@ export function createChart(svg) {
     }
     state.bg.appendChild(grid);
 
-    // axis labels
-    state.bg.appendChild(el("text", { x: (x0 + x1) / 2, y: height - 14, class: "axisText", "text-anchor": "middle" })).textContent = "h [kJ/kg]";
-    const yLab = el("text", { x: 14, y: (y0 + y1) / 2, class: "axisText", "text-anchor": "middle" });
-    yLab.setAttribute("transform", `rotate(-90 14 ${(y0 + y1) / 2})`);
-    yLab.textContent = "p [bar] (log scale)";
-    state.bg.appendChild(yLab);
+    // axis titles (optional; can be moved outside the plot for compact layouts)
+    if (showTitles) {
+      state.bg.appendChild(el("text", { x: (x0 + x1) / 2, y: height - 14, class: "axisText", "text-anchor": "middle" })).textContent = "h [kJ/kg]";
+      const yLab = el("text", { x: 14, y: (y0 + y1) / 2, class: "axisText", "text-anchor": "middle" });
+      yLab.setAttribute("transform", `rotate(-90 14 ${(y0 + y1) / 2})`);
+      yLab.textContent = "p [bar] (log scale)";
+      state.bg.appendChild(yLab);
+    }
 
     // ticks
     const { hMin, hMax } = state.domain;
@@ -250,6 +264,27 @@ export function createChart(svg) {
     const x0 = state.pad.l;
     const y1 = state.height - state.pad.b;
 
+    const placed = [];
+    // Allow labels to use the full SVG area (including padding) to reduce overlap
+    // on small screens; keep them close to their points via a max leader length.
+    const bounds = {
+      xMin: 2,
+      xMax: state.width - 2,
+      yMin: 2,
+      yMax: state.height - 2,
+    };
+
+    const isSmallScreen = typeof window !== "undefined" && window.matchMedia?.("(max-width: 980px)")?.matches;
+    const MAX_LEADER_LEN = isSmallScreen ? 18 : 26;
+
+    function clamp(v, a, b) {
+      return Math.max(a, Math.min(b, v));
+    }
+
+    function intersects(a, b) {
+      return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+    }
+
     if (points.length >= 2) {
       const polyPts = points.map((p) => ({ h: p.h, logP: Math.log10(p.Pbar) }));
       const isPlaceholder = points.every((p) => p && p.placeholder);
@@ -284,55 +319,128 @@ export function createChart(svg) {
       state.fg.appendChild(t);
 
       if (!isPlaceholder) {
-        // value label
+        // value label: place in a non-overlapping position with a leader line.
         const g = el("g");
-        const ty = y + 12;
-        let tx = x + 10;
-        const text = el("text", { x: tx, y: ty, class: "valueLabel" });
-        const l1 = el("tspan", { x: tx, dy: 0 });
-        l1.textContent = `p=${p.Pbar.toFixed(3)} bar`;
-        const l2 = el("tspan", { x: tx, dy: 13 });
-        l2.textContent = Number.isFinite(p.Tc) ? `T=${p.Tc.toFixed(2)} °C` : "T=?";
+        const leader = el("line", { class: "valueLeader" });
+        const rect = el("rect", { rx: 6, ry: 6, class: "valueLabelBg", filter: `url(#${state.tooltipFilterId})` });
+        const text = el("text", { class: "valueLabel" });
 
-        const l3 = el("tspan", { x: tx, dy: 13 });
-        l3.textContent = Number.isFinite(p.s) ? `s=${p.s.toFixed(3)} kJ/kg·K` : "";
+        const lines = [];
+        lines.push(`p=${p.Pbar.toFixed(3)} bar`);
+        lines.push(Number.isFinite(p.Tc) ? `T=${p.Tc.toFixed(2)} °C` : "T=?");
+        if (Number.isFinite(p.s)) lines.push(`s=${p.s.toFixed(3)} kJ/kg·K`);
+        if (p.phaseHint) lines.push(`phase=${p.phaseHint}`);
 
-        const l4 = el("tspan", { x: tx, dy: 13 });
-        l4.textContent = p.phaseHint ? `phase=${p.phaseHint}` : "";
-
-        text.appendChild(l1);
-        text.appendChild(l2);
-        if (Number.isFinite(p.s)) text.appendChild(l3);
-        if (p.phaseHint) text.appendChild(l4);
-        g.appendChild(text);
-
-        // background box sized after text is in DOM
-        state.fg.appendChild(g);
-        let bb = text.getBBox();
-
-        // If label would overflow right edge, flip it to the left of the point.
-        const maxX = state.width - state.pad.r - 4;
-        if (bb.x + bb.width > maxX) {
-          tx = Math.max(state.pad.l + 4, x - 10 - bb.width);
-          text.setAttribute("x", String(tx));
-          l1.setAttribute("x", String(tx));
-          l2.setAttribute("x", String(tx));
-          l3.setAttribute("x", String(tx));
-          l4.setAttribute("x", String(tx));
-          bb = text.getBBox();
+        let dy = 0;
+        for (const ln of lines) {
+          const ts = el("tspan", { dy });
+          ts.textContent = ln;
+          text.appendChild(ts);
+          dy = 13;
         }
 
-        const pad = 4;
-        const rect = el("rect", {
-          x: bb.x - pad,
-          y: bb.y - pad,
-          width: bb.width + 2 * pad,
-          height: bb.height + 2 * pad,
-          rx: 6,
-          ry: 6,
-          class: "valueLabelBg",
-        });
-        g.insertBefore(rect, text);
+        g.appendChild(leader);
+        g.appendChild(rect);
+        g.appendChild(text);
+        state.fg.appendChild(g);
+
+        function setTextPos(tx, ty, anchor) {
+          text.setAttribute("x", String(tx));
+          text.setAttribute("y", String(ty));
+          text.setAttribute("text-anchor", anchor);
+          for (const ts of text.querySelectorAll("tspan")) ts.setAttribute("x", String(tx));
+        }
+
+        function tryPlace(tx, ty, anchor) {
+          setTextPos(tx, ty, anchor);
+          let bb = text.getBBox();
+          const pad = 4;
+          let rb = { x: bb.x - pad, y: bb.y - pad, width: bb.width + 2 * pad, height: bb.height + 2 * pad };
+
+          // Clamp into bounds while keeping a leader line to the point.
+          const availW = bounds.xMax - bounds.xMin;
+          const availH = bounds.yMax - bounds.yMin;
+          if (rb.width <= availW && rb.height <= availH) {
+            const sx = clamp(rb.x, bounds.xMin, bounds.xMax - rb.width) - rb.x;
+            const sy = clamp(rb.y, bounds.yMin, bounds.yMax - rb.height) - rb.y;
+            if (sx || sy) {
+              setTextPos(tx + sx, ty + sy, anchor);
+              bb = text.getBBox();
+              rb = { x: bb.x - pad, y: bb.y - pad, width: bb.width + 2 * pad, height: bb.height + 2 * pad };
+            }
+          }
+
+          const inBounds = rb.x >= bounds.xMin && rb.y >= bounds.yMin && rb.x + rb.width <= bounds.xMax && rb.y + rb.height <= bounds.yMax;
+          if (!inBounds) return null;
+
+          for (const pbb of placed) {
+            if (intersects(rb, pbb)) return null;
+          }
+
+          // Ensure the tooltip stays visually attached to the point.
+          const x2 = clamp(x, rb.x, rb.x + rb.width);
+          const y2 = clamp(y, rb.y, rb.y + rb.height);
+          const d = Math.hypot(x - x2, y - y2);
+          if (d > MAX_LEADER_LEN) return null;
+
+          return { bb, rb, pad, x2, y2 };
+        }
+
+        const midX = (bounds.xMin + bounds.xMax) / 2;
+        const midY = (bounds.yMin + bounds.yMax) / 2;
+        const preferRight = x < midX;
+        const preferDown = y < midY;
+
+        const dirOrder = [];
+        // Primary side first.
+        dirOrder.push(preferRight ? { dx: 1, dy: 0 } : { dx: -1, dy: 0 });
+        // Then diagonals away from plot center.
+        dirOrder.push({ dx: preferRight ? 1 : -1, dy: preferDown ? 1 : -1 });
+        dirOrder.push({ dx: preferRight ? 1 : -1, dy: preferDown ? -1 : 1 });
+        // Then opposite side.
+        dirOrder.push(!preferRight ? { dx: 1, dy: 0 } : { dx: -1, dy: 0 });
+        // Then verticals.
+        dirOrder.push(preferDown ? { dx: 0, dy: 1 } : { dx: 0, dy: -1 });
+        dirOrder.push(!preferDown ? { dx: 0, dy: 1 } : { dx: 0, dy: -1 });
+
+        const radii = [14, 22, 32, 44, 58, 76];
+
+        let placedInfo = null;
+        for (const d of dirOrder) {
+          for (const r of radii) {
+            const tx = x + d.dx * r;
+            const ty = y + d.dy * r;
+            const anchor = d.dx < 0 ? "end" : d.dx > 0 ? "start" : x < midX ? "start" : "end";
+            placedInfo = tryPlace(tx, ty, anchor);
+            if (placedInfo) break;
+          }
+          if (placedInfo) break;
+        }
+
+        // Fallback: place on the preferred side even if overlapping (but still close).
+        if (!placedInfo) {
+          const dx = preferRight ? 14 : -14;
+          const anchor = preferRight ? "start" : "end";
+          setTextPos(x + dx, y + 14, anchor);
+          const bb = text.getBBox();
+          const pad = 4;
+          const rb = { x: bb.x - pad, y: bb.y - pad, width: bb.width + 2 * pad, height: bb.height + 2 * pad };
+          const x2 = clamp(x, rb.x, rb.x + rb.width);
+          const y2 = clamp(y, rb.y, rb.y + rb.height);
+          placedInfo = { bb, rb, pad, x2, y2 };
+        }
+
+        placed.push(placedInfo.rb);
+
+        rect.setAttribute("x", String(placedInfo.rb.x));
+        rect.setAttribute("y", String(placedInfo.rb.y));
+        rect.setAttribute("width", String(placedInfo.rb.width));
+        rect.setAttribute("height", String(placedInfo.rb.height));
+
+        leader.setAttribute("x1", String(x));
+        leader.setAttribute("y1", String(y));
+        leader.setAttribute("x2", String(placedInfo.x2));
+        leader.setAttribute("y2", String(placedInfo.y2));
       }
     }
   }

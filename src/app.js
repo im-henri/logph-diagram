@@ -17,8 +17,79 @@ const svg = document.getElementById("chart");
 const chartWrap = document.querySelector(".chartWrap");
 const chartOverlay = document.getElementById("chartOverlay");
 const chartOverlayText = document.getElementById("chartOverlayText");
+const chartAxisHeader = document.querySelector(".chartAxisHeader");
+const chartStage = document.querySelector(".chartStage");
 
 const chart = createChart(svg);
+
+// Keep the plot readable on very wide/short viewports by fitting the SVG into the
+// available space with a preferred aspect ratio (width/height), while still using
+// as much space as possible.
+const ASPECT_MIN = 0.75;
+const ASPECT_MAX = 2.0;
+
+function fitChartSvg() {
+  if (!chartWrap || !svg) return;
+  const host = chartStage || chartWrap;
+  const r = host.getBoundingClientRect();
+  const maxW = Math.max(1, r.width);
+  const maxH = Math.max(1, r.height);
+
+  const isMobilePortrait = window.matchMedia?.("(max-width: 980px) and (orientation: portrait)")?.matches;
+  const containerAspect = maxW / maxH;
+  const targetAspect = isMobilePortrait ? 1.0 : Math.min(ASPECT_MAX, Math.max(ASPECT_MIN, containerAspect));
+
+  let w = maxW;
+  let h = w / targetAspect;
+  if (h > maxH) {
+    h = maxH;
+    w = h * targetAspect;
+  }
+
+  svg.style.width = `${Math.max(1, Math.floor(w))}px`;
+  svg.style.height = `${Math.max(1, Math.floor(h))}px`;
+}
+
+function drawChartFromSat(sat) {
+  // Titles are rendered outside the SVG to save space, so we can reduce padding.
+  chart.state.pad.l = 44;
+  chart.state.pad.r = 28;
+  chart.state.pad.t = 12;
+  chart.state.pad.b = 32;
+
+  fitChartSvg();
+  chart.resize();
+  chart.clear();
+  if (sat?.length) {
+    chart.setDomainFromSat(sat);
+  } else {
+    // Fallback domain: 0.1..100 bar and a reasonable enthalpy span.
+    chart.state.domain.hMin = -200;
+    chart.state.domain.hMax = 800;
+    chart.state.domain.logPMin = -1;
+    chart.state.domain.logPMax = 2;
+  }
+  chart.drawAxes({ showTitles: false });
+  chart.drawAuxIsobars();
+  if (sat?.length) chart.drawSaturation(sat);
+
+  // Auxiliary overlay: quality lines inside the dome
+  if (sat?.length) {
+    const xs = [0.05, 0.15, 0.25, 0.35, 0.5, 0.65, 0.75, 0.85, 0.95];
+    const qualityCurves = xs.map((x) => ({
+      kind: "quality",
+      label: `x=${x.toFixed(2)}`,
+      points: sat.map((s) => ({
+        h: s.hL + x * (s.hV - s.hL),
+        logP: Math.log10(s.P / 1e5),
+      })),
+    }));
+    chart.drawAuxCurves(qualityCurves);
+  }
+
+  renderPoints();
+  validate();
+}
 
 function setChartLoading(on, msg) {
   chartWrap?.classList.toggle("isLoading", !!on);
@@ -858,37 +929,7 @@ async function regenerateChart() {
       setStatus(["Could not compute a stable saturation curve for this fluid.", `Model: ${propModel?.name}`], "warn");
     }
 
-    chart.resize();
-    chart.clear();
-    if (sat.length) {
-      chart.setDomainFromSat(sat);
-    } else {
-      // Fallback domain: 0.1..100 bar and a reasonable enthalpy span.
-      chart.state.domain.hMin = -200;
-      chart.state.domain.hMax = 800;
-      chart.state.domain.logPMin = -1;
-      chart.state.domain.logPMax = 2;
-    }
-    chart.drawAxes();
-    chart.drawAuxIsobars();
-    if (sat.length) chart.drawSaturation(sat);
-
-    // Auxiliary overlay: quality lines inside the dome
-    if (sat.length) {
-      const xs = [0.05, 0.15, 0.25, 0.35, 0.5, 0.65, 0.75, 0.85, 0.95];
-      const qualityCurves = xs.map((x) => ({
-        kind: "quality",
-        label: `x=${x.toFixed(2)}`,
-        points: sat.map((s) => ({
-          h: s.hL + x * (s.hV - s.hL),
-          logP: Math.log10(s.P / 1e5),
-        })),
-      }));
-      chart.drawAuxCurves(qualityCurves);
-    }
-
-    renderPoints();
-    validate();
+    drawChartFromSat(sat);
   } finally {
     if (mySeq === chartGenSeq) setChartLoading(false);
   }
@@ -1006,7 +1047,9 @@ function wireInteractions() {
 
   const drag = { active: false, idx: -1, moved: false, pid: null };
 
-  svg.addEventListener("pointerdown", (ev) => {
+  svg.addEventListener(
+    "pointerdown",
+    (ev) => {
     const idxStr = ev.target?.getAttribute?.("data-pt-index");
     if (idxStr == null) return;
     drag.active = true;
@@ -1015,17 +1058,24 @@ function wireInteractions() {
     drag.pid = ev.pointerId;
     svg.setPointerCapture(ev.pointerId);
     ev.preventDefault();
-  });
+    },
+    { passive: false }
+  );
 
-  svg.addEventListener("pointermove", (ev) => {
-    if (!drag.active) return;
-    const p = chart.eventToData(ev);
-    if (!p) return;
-    drag.moved = true;
-    updatePointFromDrag(drag.idx, { Pbar: p.Pbar, h: p.h });
-    renderPoints();
-    validate();
-  });
+  svg.addEventListener(
+    "pointermove",
+    (ev) => {
+      if (!drag.active) return;
+      const p = chart.eventToData(ev);
+      if (!p) return;
+      ev.preventDefault();
+      drag.moved = true;
+      updatePointFromDrag(drag.idx, { Pbar: p.Pbar, h: p.h });
+      renderPoints();
+      validate();
+    },
+    { passive: false }
+  );
 
   function endDrag(ev) {
     if (!drag.active) return;
@@ -1054,10 +1104,11 @@ function wireInteractions() {
   });
 
   const ro = new ResizeObserver(() => {
-    chart.resize();
-    regenerateChart();
+    drawChartFromSat(currentSat);
   });
-  ro.observe(svg);
+  if (chartStage) ro.observe(chartStage);
+  else if (chartWrap) ro.observe(chartWrap);
+  else ro.observe(svg);
 }
 
 async function main() {

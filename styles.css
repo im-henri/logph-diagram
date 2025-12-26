@@ -87,7 +87,7 @@ html[data-theme="light"] body{
     var(--bg);
 }
 
-.app{height:100vh;display:flex;flex-direction:column;overflow:hidden}
+.app{height:100vh;height:100dvh;display:flex;flex-direction:column;overflow:hidden}
 
 /* Top bar */
 .appBar{display:flex;gap:14px;align-items:center;justify-content:flex-end;padding:14px 18px;border-bottom:1px solid var(--border);background:var(--glassBar);backdrop-filter:blur(16px);position:sticky;top:0;z-index:10;box-shadow:var(--shadowSoft)}
@@ -157,16 +157,21 @@ details.card ul{margin:6px 0 0 18px}
 details.card li{margin:6px 0}
 
 /* Chart */
-.chartWrap{background:linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.018));border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;min-height:0;display:flex;flex-direction:column;box-shadow:var(--shadow);position:relative}
+.chartWrap{background:linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.018));border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;min-height:0;display:flex;flex-direction:column;box-shadow:var(--shadow)}
+
+.chartAxisHeader{padding:10px 12px 0 12px;display:flex;flex-direction:column;align-items:flex-start;gap:2px;color:var(--muted);font-size:12px;letter-spacing:0.2px;pointer-events:none}
+
+.chartStage{position:relative;flex:1;min-height:0;display:flex;align-items:center;justify-content:center}
 
 .chartWrap.isLoading .chart{opacity:0.22}
+
 .chartOverlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:rgba(0,0,0,0.50);backdrop-filter:blur(2px);z-index:5;pointer-events:all}
 .chartOverlay[hidden]{display:none}
 .chartOverlayText{color:var(--text);font-size:13px;letter-spacing:0.2px;opacity:0.95}
 .chartSpinner{width:34px;height:34px;border-radius:50%;border:3px solid rgba(255,255,255,0.22);border-top-color:rgba(255,255,255,0.82);animation:spin 0.9s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 
-.chart{width:100%;flex:1;min-height:0;display:block}
+.chart{width:100%;min-height:0;display:block;max-width:100%;max-height:100%;touch-action:none;-webkit-user-select:none;user-select:none}
 
 /* Responsive */
 /* Phone / portrait-first UX: chart dominates, controls in a bottom sheet.
@@ -273,3 +278,4 @@ details.card li{margin:6px 0}
 .guideLine{stroke:rgba(255,255,255,0.35);stroke-width:1;stroke-dasharray:4 4}
 .valueLabel{font-size:11px;fill:rgba(255,255,255,0.92)}
 .valueLabelBg{fill:rgba(0,0,0,0.35);stroke:rgba(255,255,255,0.12);stroke-width:1}
+.valueLeader{stroke:rgba(255,255,255,0.32);stroke-width:1}

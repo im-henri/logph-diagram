@@ -67,10 +67,16 @@
         </aside>
 
         <section class="chartWrap">
-          <svg id="chart" class="chart" role="img" aria-label="log(p)-h diagram"></svg>
-          <div id="chartOverlay" class="chartOverlay" hidden>
-            <div class="chartSpinner" aria-hidden="true"></div>
-            <div id="chartOverlayText" class="chartOverlayText">Loading…</div>
+          <div class="chartAxisHeader" aria-hidden="true">
+            <div>y = p [bar] (log scale)</div>
+            <div>x = h [kJ/kg]</div>
+          </div>
+          <div class="chartStage">
+            <svg id="chart" class="chart" role="img" aria-label="log(p)-h diagram"></svg>
+            <div id="chartOverlay" class="chartOverlay" hidden>
+              <div class="chartSpinner" aria-hidden="true"></div>
+              <div id="chartOverlayText" class="chartOverlayText">Loading…</div>
+            </div>
           </div>
         </section>
       </main>
