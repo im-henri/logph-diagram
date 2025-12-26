@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>log(p)–h Cycle Debugger</title>
+    <link rel="stylesheet" href="styles.css?v=20251224" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="appBar">
+        <div class="appActions">
+          <label class="field">
+            <span>Fluid</span>
+            <select id="fluidSelect"></select>
+          </label>
+          <button id="themeBtn" type="button" class="btn">Theme</button>
+          <button id="panelBtn" type="button" class="btn panelBtn">Controls</button>
+          <button id="clearBtn" type="button" class="btn">Clear points</button>
+        </div>
+      </header>
+
+      <main class="layout">
+        <aside class="sidebar" id="sidebar">
+          <div class="sidebarTop">
+            <div class="sidebarTitle">Controls</div>
+            <button id="panelCloseBtn" type="button" class="btn">Close</button>
+          </div>
+
+          <section class="card">
+            <div class="cardTitle">Saved cycles</div>
+            <div class="row">
+              <label class="field grow">
+                <span>Name</span>
+                <select id="savedSelect"></select>
+              </label>
+              <button id="saveBtn" type="button" class="btn">Save</button>
+              <button id="loadBtn" type="button" class="btn">Load</button>
+              <button id="deleteBtn" type="button" class="btn btnDanger">Delete</button>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="cardTitle">Results</div>
+            <div id="results" class="diagnostics"></div>
+          </section>
+
+          <section class="card">
+            <div class="cardTitle">State points</div>
+            <div class="tableWrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>P (bar)</th>
+                    <th>T (°C)</th>
+                    <th>Phase</th>
+                    <th>h (kJ/kg)</th>
+                  </tr>
+                </thead>
+                <tbody id="pointsTbody"></tbody>
+              </table>
+            </div>
+          </section>
+
+
+        </aside>
+
+        <section class="chartWrap">
+          <svg id="chart" class="chart" role="img" aria-label="log(p)-h diagram"></svg>
+          <div id="chartOverlay" class="chartOverlay" hidden>
+            <div class="chartSpinner" aria-hidden="true"></div>
+            <div id="chartOverlayText" class="chartOverlayText">Loading…</div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="src/app.js?v=20251225"></script>
+  </body>
+</html>
