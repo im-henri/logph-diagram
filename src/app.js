@@ -50,7 +50,7 @@ function fitChartSvg() {
   svg.style.height = `${Math.max(1, Math.floor(h))}px`;
 }
 
-function drawChartFromSat(sat) {
+function drawChartFromSat(sat, { noTable = false } = {}) {
   // Titles are rendered outside the SVG to save space, so we can reduce padding.
   chart.state.pad.l = 44;
   chart.state.pad.r = 28;
@@ -87,7 +87,8 @@ function drawChartFromSat(sat) {
     chart.drawAuxCurves(qualityCurves);
   }
 
-  renderPoints();
+  if (noTable) drawPointsOnChart();
+  else renderPoints();
   validate();
 }
 
@@ -716,7 +717,7 @@ function renderResults(pts) {
 }
 
 
-function renderPoints() {
+function drawPointsOnChart() {
   const pts = completePoints().map((p) => {
     const ph = phaseHintForPoint(p.Pbar, p.h);
     return { ...p, phaseHint: ph.short, phaseClass: ph.cls };
@@ -742,6 +743,12 @@ function renderPoints() {
   } else {
     chart.drawPointsAndCycle(pts);
   }
+
+  return pts;
+}
+
+function renderPoints() {
+  const pts = drawPointsOnChart();
 
   rebuildTable();
   renderResults(pts);
@@ -1104,7 +1111,9 @@ function wireInteractions() {
   });
 
   const ro = new ResizeObserver(() => {
-    drawChartFromSat(currentSat);
+    // On mobile, the on-screen keyboard triggers a resize; avoid rebuilding the controls table
+    // (which would drop focus and immediately hide the keyboard).
+    drawChartFromSat(currentSat, { noTable: true });
   });
   if (chartStage) ro.observe(chartStage);
   else if (chartWrap) ro.observe(chartWrap);
