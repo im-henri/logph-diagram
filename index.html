@@ -70,9 +70,13 @@
           <div class="chartAxisHeader" aria-hidden="true">
             <div>y = p [bar] (log scale)</div>
             <div>x = h [kJ/kg]</div>
+            <div class="chartHint">Touch: two-finger drag to pan • pinch to zoom</div>
           </div>
           <div class="chartStage">
             <svg id="chart" class="chart" role="img" aria-label="log(p)-h diagram"></svg>
+
+            <button id="viewReset" type="button" class="btn viewReset" aria-label="Reset view">Reset view</button>
+
             <div id="chartOverlay" class="chartOverlay" hidden>
               <div class="chartSpinner" aria-hidden="true"></div>
               <div id="chartOverlayText" class="chartOverlayText">Loading…</div>

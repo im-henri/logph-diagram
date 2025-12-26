@@ -160,6 +160,7 @@ details.card li{margin:6px 0}
 .chartWrap{background:linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.018));border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;min-height:0;display:flex;flex-direction:column;box-shadow:var(--shadow)}
 
 .chartAxisHeader{padding:10px 12px 0 12px;display:flex;flex-direction:column;align-items:flex-start;gap:2px;color:var(--muted);font-size:12px;letter-spacing:0.2px;pointer-events:none}
++.chartHint{font-size:11px;opacity:0.85}
 
 .chartStage{position:relative;flex:1;min-height:0;display:flex;align-items:center;justify-content:center}
 
@@ -279,3 +280,10 @@ details.card li{margin:6px 0}
 .valueLabel{font-size:11px;fill:rgba(255,255,255,0.92)}
 .valueLabelBg{fill:rgba(0,0,0,0.35);stroke:rgba(255,255,255,0.12);stroke-width:1}
 .valueLeader{stroke:rgba(255,255,255,0.32);stroke-width:1}
+
+/* View reset button (zoom + pan) */
+.viewReset{position:absolute;left:10px;top:10px;z-index:6;background:rgba(255,255,255,0.05);opacity:0.28;transition:opacity 0.15s ease;backdrop-filter:blur(10px)}
+.chartStage:hover .viewReset,.chartStage:focus-within .viewReset{opacity:0.90}
+@media (pointer:coarse){
+  .viewReset{opacity:0.60}
+}

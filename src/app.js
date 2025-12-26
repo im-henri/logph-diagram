@@ -20,6 +20,8 @@ const chartOverlayText = document.getElementById("chartOverlayText");
 const chartAxisHeader = document.querySelector(".chartAxisHeader");
 const chartStage = document.querySelector(".chartStage");
 
+const viewResetBtn = document.getElementById("viewReset");
+
 const chart = createChart(svg);
 
 // Keep the plot readable on very wide/short viewports by fitting the SVG into the
@@ -50,7 +52,71 @@ function fitChartSvg() {
   svg.style.height = `${Math.max(1, Math.floor(h))}px`;
 }
 
-function drawChartFromSat(sat, { noTable = false } = {}) {
+function clampZoom(z) {
+  return Math.max(0.08, Math.min(40, z));
+}
+
+function zoomFactorFromStep(step) {
+  // Exponential feels natural: each ~40 steps doubles/halves the span.
+  return Math.pow(2, step / 40);
+}
+
+function applyZoomToDomain({ anchor, fromDomain } = {}) {
+  if (!baseDomain) return;
+
+  const d = chart.state.domain;
+  const old = fromDomain ? { ...fromDomain } : { hMin: d.hMin, hMax: d.hMax, logPMin: d.logPMin, logPMax: d.logPMax };
+
+  const baseSpanH = baseDomain.hMax - baseDomain.hMin;
+  const baseSpanLp = baseDomain.logPMax - baseDomain.logPMin;
+
+  const newSpanH = baseSpanH / zoomX;
+  const newSpanLp = baseSpanLp / zoomY;
+
+  // Default: keep current center.
+  let newHMin, newHMax, newLpMin, newLpMax;
+  if (anchor && Number.isFinite(anchor.h) && Number.isFinite(anchor.logP)) {
+    const tH = (anchor.h - old.hMin) / (old.hMax - old.hMin);
+    const tLp = (anchor.logP - old.logPMin) / (old.logPMax - old.logPMin);
+    newHMin = anchor.h - tH * newSpanH;
+    newHMax = newHMin + newSpanH;
+    newLpMin = anchor.logP - tLp * newSpanLp;
+    newLpMax = newLpMin + newSpanLp;
+  } else {
+    const cH = 0.5 * (old.hMin + old.hMax);
+    const cLp = 0.5 * (old.logPMin + old.logPMax);
+    newHMin = cH - 0.5 * newSpanH;
+    newHMax = cH + 0.5 * newSpanH;
+    newLpMin = cLp - 0.5 * newSpanLp;
+    newLpMax = cLp + 0.5 * newSpanLp;
+  }
+
+  // Allow zoom-out beyond base a bit, but avoid runaway ranges.
+  const maxSpanH = baseSpanH * 3.0;
+  const maxSpanLp = baseSpanLp * 3.0;
+  const spanH = Math.min(maxSpanH, Math.max(baseSpanH / 40, newHMax - newHMin));
+  const spanLp = Math.min(maxSpanLp, Math.max(baseSpanLp / 40, newLpMax - newLpMin));
+  const cH2 = 0.5 * (newHMin + newHMax);
+  const cLp2 = 0.5 * (newLpMin + newLpMax);
+
+  d.hMin = cH2 - 0.5 * spanH;
+  d.hMax = cH2 + 0.5 * spanH;
+  d.logPMin = cLp2 - 0.5 * spanLp;
+  d.logPMax = cLp2 + 0.5 * spanLp;
+}
+
+function resetView() {
+  zoomX = 1;
+  zoomY = 1;
+  if (baseDomain) {
+    chart.state.domain.hMin = baseDomain.hMin;
+    chart.state.domain.hMax = baseDomain.hMax;
+    chart.state.domain.logPMin = baseDomain.logPMin;
+    chart.state.domain.logPMax = baseDomain.logPMax;
+  }
+}
+
+function drawChartFromSat(sat, { noTable = false, keepDomain = false } = {}) {
   // Titles are rendered outside the SVG to save space, so we can reduce padding.
   chart.state.pad.l = 44;
   chart.state.pad.r = 28;
@@ -60,15 +126,25 @@ function drawChartFromSat(sat, { noTable = false } = {}) {
   fitChartSvg();
   chart.resize();
   chart.clear();
-  if (sat?.length) {
-    chart.setDomainFromSat(sat);
-  } else {
-    // Fallback domain: 0.1..100 bar and a reasonable enthalpy span.
-    chart.state.domain.hMin = -200;
-    chart.state.domain.hMax = 800;
-    chart.state.domain.logPMin = -1;
-    chart.state.domain.logPMax = 2;
+
+  if (!keepDomain) {
+    if (sat?.length) {
+      chart.setDomainFromSat(sat);
+      baseDomain = { ...chart.state.domain };
+    } else {
+      // Fallback domain: 0.1..100 bar and a reasonable enthalpy span.
+      chart.state.domain.hMin = -200;
+      chart.state.domain.hMax = 800;
+      chart.state.domain.logPMin = -1;
+      chart.state.domain.logPMax = 2;
+      baseDomain = { ...chart.state.domain };
+    }
+
+    // New chart domain implies we reset view (fluid/table changed).
+    resetView();
+    applyZoomToDomain();
   }
+
   chart.drawAxes({ showTitles: false });
   chart.drawAuxIsobars();
   if (sat?.length) chart.drawSaturation(sat);
@@ -131,6 +207,10 @@ let currentFluidKey = null;
 let currentSat = []; // saturation curve currently displayed
 let computeSeq = Array.from({ length: pointTarget }, () => 0);
 let chartGenSeq = 0;
+
+let baseDomain = null; // set from saturation curve; zoom derives from this
+let zoomX = 1;
+let zoomY = 1;
 
 function fmt(x, n = 3) {
   if (!Number.isFinite(x)) return "";
@@ -1071,12 +1151,157 @@ function wireInteractions() {
   loadBtn?.addEventListener("click", loadSelectedCycle);
   deleteBtn?.addEventListener("click", deleteSelectedCycle);
 
+  function redrawZoomed({ anchor } = {}) {
+    if (!baseDomain) return;
+    applyZoomToDomain({ anchor });
+    drawChartFromSat(currentSat, { noTable: true, keepDomain: true });
+  }
 
+  viewResetBtn?.addEventListener("click", () => {
+    resetView();
+    drawChartFromSat(currentSat, { noTable: true, keepDomain: true });
+  });
+
+  function eventToSvgXY(ev) {
+    const pt = svg.createSVGPoint();
+    pt.x = ev.clientX;
+    pt.y = ev.clientY;
+    const m = svg.getScreenCTM();
+    if (!m) return null;
+    const loc = pt.matrixTransform(m.inverse());
+    return { x: loc.x, y: loc.y };
+  }
+
+  // Drag: move existing points.
   const drag = { active: false, idx: -1, moved: false, pid: null };
+
+  svg.addEventListener(
+    "wheel",
+    (ev) => {
+      if (!baseDomain) return;
+      ev.preventDefault();
+
+      // Wheel default: zoom both. Shift: X only. Alt: Y only.
+      const dz = ev.deltaY;
+      const step = dz > 0 ? -6 : 6;
+      const f = zoomFactorFromStep(step);
+
+      const anchor = chart.eventToData(ev);
+      const a = anchor ? { h: anchor.h, logP: Math.log10(anchor.Pbar) } : null;
+
+      if (ev.shiftKey) zoomX = clampZoom(zoomX * f);
+      else if (ev.altKey) zoomY = clampZoom(zoomY * f);
+      else {
+        zoomX = clampZoom(zoomX * f);
+        zoomY = clampZoom(zoomY * f);
+      }
+
+      redrawZoomed({ anchor: a });
+    },
+    { passive: false }
+  );
+
+  // Touch: two-finger pinch-to-zoom + two-finger pan (centroid move).
+  const pinch = { pts: new Map(), active: false, moved: false, startDist: 0, startX: 0, startY: 0, startZX: 1, startZY: 1, anchor: null, startDomain: null };
+  function dist2(a, b) {
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  }
 
   svg.addEventListener(
     "pointerdown",
     (ev) => {
+      if (ev.pointerType !== "touch") return;
+      pinch.pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+
+      // When a second finger goes down, switch into gesture mode regardless of target.
+      if (pinch.pts.size === 2 && baseDomain) {
+        const [a, b] = [...pinch.pts.values()];
+        pinch.active = true;
+        pinch.startDist = dist2(a, b);
+        pinch.startX = (a.x + b.x) / 2;
+        pinch.startY = (a.y + b.y) / 2;
+        pinch.moved = false;
+        pinch.startDomain = { ...chart.state.domain };
+        pinch.startZX = zoomX;
+        pinch.startZY = zoomY;
+        const anc = chart.eventToData({ clientX: pinch.startX, clientY: pinch.startY });
+        pinch.anchor = anc ? { h: anc.h, logP: Math.log10(anc.Pbar) } : null;
+
+        // Cancel single-finger point drag if a 2-finger gesture begins.
+        if (drag.active) {
+          drag.active = false;
+          drag.moved = false;
+          drag.pid = null;
+        }
+      }
+    },
+    { passive: true }
+  );
+
+  svg.addEventListener(
+    "pointermove",
+    (ev) => {
+      if (!pinch.pts.has(ev.pointerId)) return;
+      pinch.pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      if (!pinch.active || pinch.pts.size !== 2) return;
+
+      const [a, b] = [...pinch.pts.values()];
+      const d = dist2(a, b);
+      if (!(d > 5) || !(pinch.startDist > 5)) return;
+
+      const scale = d / pinch.startDist;
+      const newZ = clampZoom(pinch.startZX * scale);
+      // Pinch zooms both axes equally
+      zoomX = newZ;
+      zoomY = newZ;
+
+      const curMid = eventToSvgXY({ clientX: (a.x + b.x) / 2, clientY: (a.y + b.y) / 2 });
+      const startMid = eventToSvgXY({ clientX: pinch.startX, clientY: pinch.startY });
+
+      // Zoom (anchored at gesture start midpoint) from the domain at gesture start.
+      applyZoomToDomain({ anchor: pinch.anchor, fromDomain: pinch.startDomain });
+
+      // Then: 2-finger pan by moving the midpoint (same feel as drag-pan)
+      if (curMid && startMid) {
+        const dx = curMid.x - startMid.x;
+        const dy = curMid.y - startMid.y;
+        if (!pinch.moved && (Math.abs(dx) > 2.5 || Math.abs(dy) > 2.5 || Math.abs(scale - 1) > 0.015)) pinch.moved = true;
+
+        const plotW = Math.max(1, chart.state.width - chart.state.pad.l - chart.state.pad.r);
+        const plotH = Math.max(1, chart.state.height - chart.state.pad.t - chart.state.pad.b);
+        const spanH = chart.state.domain.hMax - chart.state.domain.hMin;
+        const spanLp = chart.state.domain.logPMax - chart.state.domain.logPMin;
+
+        const dh = (-dx / plotW) * spanH;
+        const dlp = (dy / plotH) * spanLp;
+
+        chart.state.domain.hMin += dh;
+        chart.state.domain.hMax += dh;
+        chart.state.domain.logPMin += dlp;
+        chart.state.domain.logPMax += dlp;
+      }
+
+      drawChartFromSat(currentSat, { noTable: true, keepDomain: true });
+    },
+    { passive: true }
+  );
+
+  function endPinch(ev) {
+    pinch.pts.delete(ev.pointerId);
+    if (pinch.pts.size < 2) {
+      pinch.active = false;
+      pinch.anchor = null;
+      pinch.startDomain = null;
+    }
+  }
+  svg.addEventListener("pointerup", endPinch);
+  svg.addEventListener("pointercancel", endPinch);
+
+
+  svg.addEventListener(
+    "pointerdown",
+    (ev) => {
+    if (pinch.active || pinch.pts.size >= 2) return;
     const idxStr = ev.target?.getAttribute?.("data-pt-index");
     if (idxStr == null) return;
     drag.active = true;
@@ -1120,9 +1345,10 @@ function wireInteractions() {
   svg.addEventListener("pointercancel", endDrag);
 
   svg.addEventListener("click", (ev) => {
-    // ignore click following a drag, or clicking an existing point
-    if (drag.moved || ev.target?.getAttribute?.("data-pt-index") != null) {
+    // ignore click following a drag/gesture, or clicking an existing point
+    if (drag.moved || pinch.moved || ev.target?.getAttribute?.("data-pt-index") != null) {
       drag.moved = false;
+      pinch.moved = false;
       return;
     }
     const p = chart.eventToData(ev);
@@ -1133,7 +1359,7 @@ function wireInteractions() {
   const ro = new ResizeObserver(() => {
     // On mobile, the on-screen keyboard triggers a resize; avoid rebuilding the controls table
     // (which would drop focus and immediately hide the keyboard).
-    drawChartFromSat(currentSat, { noTable: true });
+    drawChartFromSat(currentSat, { noTable: true, keepDomain: true });
   });
   if (chartStage) ro.observe(chartStage);
   else if (chartWrap) ro.observe(chartWrap);
