@@ -247,6 +247,9 @@ details.card li{margin:6px 0}
 #pointValuesToggleBtn{border-color:rgba(96,165,250,0.45)}
 #pointValuesToggleBtn:hover{border-color:rgba(96,165,250,0.80);background:rgba(96,165,250,0.14)}
 #pointValuesToggleBtn.isIntersections{border-color:rgba(96,165,250,0.95);background:linear-gradient(180deg, rgba(96,165,250,0.32), rgba(96,165,250,0.14))}
+#pressureLockBtn{border-color:rgba(251,191,36,0.45)}
+#pressureLockBtn:hover{border-color:rgba(251,191,36,0.78);background:rgba(251,191,36,0.12)}
+#pressureLockBtn.isLocked{border-color:rgba(251,191,36,0.95);background:linear-gradient(180deg, rgba(251,191,36,0.30), rgba(251,191,36,0.14))}
 #pointsViewBadge{font-weight:700}
 
 /* Desktop: sidebar is always visible, so hide the drawer toggle. */

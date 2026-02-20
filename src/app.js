@@ -23,6 +23,7 @@ const chartStage = document.querySelector(".chartStage");
 
 const viewResetBtn = document.getElementById("viewReset");
 const pointValuesToggleBtn = document.getElementById("pointValuesToggleBtn");
+const pressureLockBtn = document.getElementById("pressureLockBtn");
 const pointsViewBadge = document.getElementById("pointsViewBadge");
 
 const chart = createChart(svg);
@@ -216,6 +217,7 @@ let zoomX = 1;
 let zoomY = 1;
 let valueViewMode = "actual";
 let currentIntersections = [];
+let pressureLockEnabled = false;
 
 function fmt(x, n = 3) {
   if (!Number.isFinite(x)) return "";
@@ -234,6 +236,101 @@ function updateValueViewUi() {
     } else {
       pointsViewBadge.textContent = "Showing: Actual points";
     }
+  }
+}
+
+function updatePressureLockUi() {
+  if (!pressureLockBtn) return;
+  pressureLockBtn.textContent = pressureLockEnabled ? "Pressure lock: On" : "Pressure lock: Off";
+  pressureLockBtn.classList.toggle("isLocked", pressureLockEnabled);
+}
+
+function pairedPressureIndex(i) {
+  if (i === 0) return 3;
+  if (i === 3) return 0;
+  if (i === 1) return 2;
+  if (i === 2) return 1;
+  return -1;
+}
+
+function syncPairedPressure(i, Pbar, { refresh = false } = {}) {
+  const pair = pairedPressureIndex(i);
+  if (pair < 0 || !Number.isFinite(Pbar) || Pbar <= 0) return;
+  const pj = points[pair];
+  const pairDefaultPhase = pair === 3 ? "2p" : "auto";
+  bumpSeq(pair);
+  points[pair] = {
+    ...(pj || { Pbar: NaN, h: NaN, Tc: NaN, x: NaN, phase: pairDefaultPhase }),
+    Pbar,
+    phase: pj?.phase || pairDefaultPhase,
+  };
+  if (refresh) refreshPointDerivedAfterPressureSync(pair);
+}
+
+function normalizePressureLocks() {
+  const groups = [
+    [0, 3],
+    [1, 2],
+  ];
+  for (const [a, b] of groups) {
+    const pa = points[a]?.Pbar;
+    const pb = points[b]?.Pbar;
+    const target = Number.isFinite(pa) && pa > 0 ? pa : Number.isFinite(pb) && pb > 0 ? pb : NaN;
+    if (!Number.isFinite(target)) continue;
+    const paDef = a === 3 ? "2p" : "auto";
+    const pbDef = b === 3 ? "2p" : "auto";
+    points[a] = { ...(points[a] || { Pbar: NaN, h: NaN, Tc: NaN, x: NaN, phase: paDef }), Pbar: target, phase: points[a]?.phase || paDef };
+    points[b] = { ...(points[b] || { Pbar: NaN, h: NaN, Tc: NaN, x: NaN, phase: pbDef }), Pbar: target, phase: points[b]?.phase || pbDef };
+    bumpSeq(a);
+    bumpSeq(b);
+    refreshPointDerivedAfterPressureSync(a);
+    refreshPointDerivedAfterPressureSync(b);
+  }
+}
+
+function refreshPointDerivedAfterPressureSync(idx) {
+  const p = points[idx];
+  if (!p || !Number.isFinite(p.Pbar) || p.Pbar <= 0) return;
+
+  const phase = p.phase || (idx === 3 ? "2p" : "auto");
+  if (Number.isFinite(p.h)) {
+    const hAdj = phase === "2p" ? clampHToTwoPhase(p.Pbar, p.h) : p.h;
+    points[idx] = {
+      ...p,
+      h: hAdj,
+      Tc: NaN,
+      s: NaN,
+      x: qualityFromPH(p.Pbar, hAdj),
+      phase,
+    };
+    updatePointTemperature(idx);
+    return;
+  }
+
+  if (Number.isFinite(p.Tc)) {
+    if (phase === "2p") {
+      const res = twoPhaseFromTPForced(p.Pbar, p.Tc, p);
+      if (Number.isFinite(res?.h)) {
+        points[idx] = { ...p, h: res.h, Tc: res.TcOut, x: res.x, s: NaN, phase };
+        renderPoints();
+        validate();
+      }
+      return;
+    }
+
+    const seq = bumpSeq(idx);
+    computeHFromTPStable(p.Pbar, p.Tc, phase, p, "p")
+      .then((res) => {
+        if (computeSeq[idx] !== seq) return;
+        const hCalc = res?.h;
+        if (!Number.isFinite(hCalc)) return;
+        points[idx] = { ...points[idx], Pbar: p.Pbar, h: hCalc, Tc: res.TcOut, x: res.x, s: NaN, phase };
+        renderPoints();
+        validate();
+      })
+      .catch(() => {
+        /* keep user values */
+      });
   }
 }
 
@@ -559,22 +656,20 @@ function rebuildTable() {
       }
       inP.value = fmt(Pbar, 2);
 
-      // Convenience: keep paired pressures equal when the paired point is still blank.
-      // P1 <-> P4 and P2 <-> P3 (only if the paired point has no P and no T).
+      // Optional pressure lock for paired low/high states:
+      // P1 <-> P4 and P2 <-> P3.
       if (source === "p") {
-        const pair = i === 0 ? 3 : i === 3 ? 0 : i === 1 ? 2 : i === 2 ? 1 : -1;
+        const pair = pairedPressureIndex(i);
         if (pair >= 0) {
-          const pj = points[pair];
-          const hasP = Number.isFinite(pj?.Pbar) && pj.Pbar > 0;
-          const hasT = Number.isFinite(pj?.Tc);
-          if (!hasP && !hasT) {
-            const pairDefaultPhase = pair === 3 ? "2p" : "auto";
-            bumpSeq(pair);
-            points[pair] = {
-              ...(pj || { Pbar: NaN, h: NaN, Tc: NaN, x: NaN, phase: pairDefaultPhase }),
-              Pbar,
-              phase: pj?.phase || pairDefaultPhase,
-            };
+          if (pressureLockEnabled) {
+            syncPairedPressure(i, Pbar, { refresh: true });
+          } else {
+            const pj = points[pair];
+            const hasP = Number.isFinite(pj?.Pbar) && pj.Pbar > 0;
+            const hasT = Number.isFinite(pj?.Tc);
+            if (!hasP && !hasT) {
+              syncPairedPressure(i, Pbar);
+            }
           }
         }
       }
@@ -1254,6 +1349,7 @@ function updatePointFromDrag(idx, p) {
 
   if (!points[idx]) points[idx] = { Pbar: p.Pbar, h, Tc: NaN, s: NaN, phase };
   points[idx] = { ...points[idx], Pbar: p.Pbar, h, Tc: NaN, s: NaN, phase };
+  if (pressureLockEnabled) syncPairedPressure(idx, p.Pbar);
 }
 
 function setPanelOpen(open) {
@@ -1266,6 +1362,13 @@ function wireInteractions() {
   pointValuesToggleBtn?.addEventListener("click", () => {
     valueViewMode = valueViewMode === "intersections" ? "actual" : "intersections";
     renderPoints();
+  });
+  pressureLockBtn?.addEventListener("click", () => {
+    pressureLockEnabled = !pressureLockEnabled;
+    if (pressureLockEnabled) normalizePressureLocks();
+    renderPoints();
+    validate();
+    updatePressureLockUi();
   });
   panelBtn?.addEventListener("click", () => setPanelOpen(true));
   panelCloseBtn?.addEventListener("click", () => setPanelOpen(false));
@@ -1463,6 +1566,10 @@ function wireInteractions() {
     }
     drag.pid = null;
     updatePointTemperature(idx);
+    if (pressureLockEnabled) {
+      const pair = pairedPressureIndex(idx);
+      if (pair >= 0) refreshPointDerivedAfterPressureSync(pair);
+    }
   }
   svg.addEventListener("pointerup", endDrag);
   svg.addEventListener("pointercancel", endDrag);
@@ -1502,6 +1609,7 @@ async function main() {
   setStatus(["Ready."], "info");
   wireInteractions();
   updateValueViewUi();
+  updatePressureLockUi();
   await regenerateChart();
 }
 
