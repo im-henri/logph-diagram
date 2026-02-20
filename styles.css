@@ -148,6 +148,7 @@ th{color:var(--muted);font-weight:700;background:rgba(0,0,0,0.14);position:stick
 tbody tr:hover td{background:rgba(255,255,255,0.035)}
 .tableWrap table th:first-child,.tableWrap table td:first-child{width:28px;padding-left:6px;padding-right:4px}
 td input,td select{width:100%;min-width:0;max-width:100%;padding:6px 6px;border-radius:10px}
+.intersectionInfo{margin-top:10px;padding-top:8px;border-top:1px solid var(--border)}
 
 details.card{padding:0}
 details.card > summary{list-style:none;cursor:pointer;padding:12px;margin:0}
@@ -242,6 +243,11 @@ details.card li{margin:6px 0}
 
 #saveBtn{border-color:rgba(110,231,183,0.35)}
 #saveBtn:hover{border-color:rgba(110,231,183,0.60);background:rgba(110,231,183,0.10)}
+
+#pointValuesToggleBtn{border-color:rgba(96,165,250,0.45)}
+#pointValuesToggleBtn:hover{border-color:rgba(96,165,250,0.80);background:rgba(96,165,250,0.14)}
+#pointValuesToggleBtn.isIntersections{border-color:rgba(96,165,250,0.95);background:linear-gradient(180deg, rgba(96,165,250,0.32), rgba(96,165,250,0.14))}
+#pointsViewBadge{font-weight:700}
 
 /* Desktop: sidebar is always visible, so hide the drawer toggle. */
 @media (min-width: 981px) and (orientation: landscape){

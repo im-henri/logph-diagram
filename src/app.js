@@ -12,6 +12,7 @@ const loadBtn = document.getElementById("loadBtn");
 const deleteBtn = document.getElementById("deleteBtn");
 const savedSelect = document.getElementById("savedSelect");
 const pointsTbody = document.getElementById("pointsTbody");
+const intersectionInfoEl = document.getElementById("intersectionInfo");
 const resultsEl = document.getElementById("results");
 const svg = document.getElementById("chart");
 const chartWrap = document.querySelector(".chartWrap");
@@ -21,6 +22,8 @@ const chartAxisHeader = document.querySelector(".chartAxisHeader");
 const chartStage = document.querySelector(".chartStage");
 
 const viewResetBtn = document.getElementById("viewReset");
+const pointValuesToggleBtn = document.getElementById("pointValuesToggleBtn");
+const pointsViewBadge = document.getElementById("pointsViewBadge");
 
 const chart = createChart(svg);
 
@@ -211,10 +214,27 @@ let chartGenSeq = 0;
 let baseDomain = null; // set from saturation curve; zoom derives from this
 let zoomX = 1;
 let zoomY = 1;
+let valueViewMode = "actual";
+let currentIntersections = [];
 
 function fmt(x, n = 3) {
   if (!Number.isFinite(x)) return "";
   return Number(x).toFixed(n);
+}
+
+function updateValueViewUi() {
+  const showingIntersections = valueViewMode === "intersections";
+  if (pointValuesToggleBtn) {
+    pointValuesToggleBtn.textContent = showingIntersections ? "Show point values" : "Show intersections";
+    pointValuesToggleBtn.classList.toggle("isIntersections", showingIntersections);
+  }
+  if (pointsViewBadge) {
+    if (showingIntersections) {
+      pointsViewBadge.textContent = `Showing: Intersection points (${currentIntersections.length})`;
+    } else {
+      pointsViewBadge.textContent = "Showing: Actual points";
+    }
+  }
 }
 
 function setStatus() {}
@@ -816,12 +836,106 @@ function renderResults(pts) {
   ].join("");
 }
 
+function renderIntersectionInfo() {
+  if (!intersectionInfoEl) return;
+  if (!currentIntersections.length) {
+    intersectionInfoEl.innerHTML = `<div class="muted">Intersections: none.</div>`;
+    return;
+  }
+
+  const rows = currentIntersections.map((p, i) => {
+    const side = p.boundary === "liq" ? "sat(liq)" : p.boundary === "vap" ? "sat(vap)" : "sat";
+    return `<div class="mono">I${i + 1} (${side}): p=${p.Pbar.toFixed(3)} bar, h=${p.h.toFixed(2)} kJ/kg</div>`;
+  });
+  intersectionInfoEl.innerHTML = [`<div><b>Intersections</b> <span class="muted">(read-only)</span></div>`, ...rows].join("");
+}
+
+function segmentIntersectionPH(a, b, c, d) {
+  const rH = b.h - a.h;
+  const rLp = b.logP - a.logP;
+  const sH = d.h - c.h;
+  const sLp = d.logP - c.logP;
+  const den = rH * sLp - rLp * sH;
+  if (Math.abs(den) < 1e-9) return null;
+
+  const qH = c.h - a.h;
+  const qLp = c.logP - a.logP;
+  const t = (qH * sLp - qLp * sH) / den;
+  const u = (qH * rLp - qLp * rH) / den;
+  if (t < -1e-6 || t > 1 + 1e-6 || u < -1e-6 || u > 1 + 1e-6) return null;
+
+  const h = a.h + t * rH;
+  const logP = a.logP + t * rLp;
+  if (!Number.isFinite(h) || !Number.isFinite(logP)) return null;
+  return { h, logP, t };
+}
+
+function computeCycleIntersections(pts) {
+  if (!Array.isArray(pts) || pts.length < 2 || !Array.isArray(currentSat) || currentSat.length < 2) return [];
+
+  const cycle = pts
+    .map((p) => ({ h: p.h, logP: Math.log10(p.Pbar) }))
+    .filter((p) => Number.isFinite(p.h) && Number.isFinite(p.logP));
+  if (cycle.length < 2) return [];
+
+  const closeCycle = cycle.length >= 3;
+  const segCount = closeCycle ? cycle.length : cycle.length - 1;
+  if (segCount < 1) return [];
+
+  const boundaries = [
+    {
+      boundary: "liq",
+      points: currentSat
+        .map((s) => ({ h: s.hL, logP: Math.log10(s.P / 1e5) }))
+        .filter((p) => Number.isFinite(p.h) && Number.isFinite(p.logP)),
+    },
+    {
+      boundary: "vap",
+      points: currentSat
+        .map((s) => ({ h: s.hV, logP: Math.log10(s.P / 1e5) }))
+        .filter((p) => Number.isFinite(p.h) && Number.isFinite(p.logP)),
+    },
+  ];
+
+  const intersections = [];
+  for (let i = 0; i < segCount; i++) {
+    const a = cycle[i];
+    const b = cycle[(i + 1) % cycle.length];
+    for (const boundary of boundaries) {
+      const edge = boundary.points;
+      for (let j = 0; j < edge.length - 1; j++) {
+        const hit = segmentIntersectionPH(a, b, edge[j], edge[j + 1]);
+        if (!hit) continue;
+        intersections.push({
+          h: hit.h,
+          logP: hit.logP,
+          Pbar: Math.pow(10, hit.logP),
+          segmentIndex: i,
+          segmentT: hit.t,
+          boundary: boundary.boundary,
+        });
+      }
+    }
+  }
+
+  intersections.sort((x, y) => (x.segmentIndex - y.segmentIndex) || (x.segmentT - y.segmentT));
+
+  const unique = [];
+  for (const hit of intersections) {
+    const exists = unique.some((u) => Math.abs(u.h - hit.h) < 1e-3 && Math.abs(u.logP - hit.logP) < 1e-5);
+    if (!exists) unique.push(hit);
+  }
+  return unique;
+}
+
 
 function drawPointsOnChart() {
   const pts = completePoints().map((p) => {
     const ph = phaseHintForPoint(p.Pbar, p.h);
     return { ...p, phaseHint: ph.short, phaseClass: ph.cls };
   });
+
+  currentIntersections = computeCycleIntersections(pts);
 
   // If no real points are defined yet, draw a faint placeholder cycle to show the intended order.
   if (pts.length === 0) {
@@ -839,9 +953,12 @@ function drawPointsOnChart() {
       { h: hA, Pbar: Math.pow(10, lpLo), placeholder: true },
     ];
 
-    chart.drawPointsAndCycle(placeholders);
+    chart.drawPointsAndCycle(placeholders, { labelMode: "points", intersections: [] });
   } else {
-    chart.drawPointsAndCycle(pts);
+    chart.drawPointsAndCycle(pts, {
+      labelMode: valueViewMode === "intersections" ? "intersections" : "points",
+      intersections: currentIntersections,
+    });
   }
 
   return pts;
@@ -851,7 +968,9 @@ function renderPoints() {
   const pts = drawPointsOnChart();
 
   rebuildTable();
+  renderIntersectionInfo();
   renderResults(pts);
+  updateValueViewUi();
 
   // Best-effort entropy for all points (computed lazily).
   for (let i = 0; i < pointTarget; i++) updatePointEntropy(i);
@@ -1144,6 +1263,10 @@ function setPanelOpen(open) {
 
 function wireInteractions() {
   clearBtn?.addEventListener("click", clearPoints);
+  pointValuesToggleBtn?.addEventListener("click", () => {
+    valueViewMode = valueViewMode === "intersections" ? "actual" : "intersections";
+    renderPoints();
+  });
   panelBtn?.addEventListener("click", () => setPanelOpen(true));
   panelCloseBtn?.addEventListener("click", () => setPanelOpen(false));
 
@@ -1378,6 +1501,7 @@ async function main() {
   propModel = await createPropertyModel();
   setStatus(["Ready."], "info");
   wireInteractions();
+  updateValueViewUi();
   await regenerateChart();
 }
 
