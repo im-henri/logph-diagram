@@ -25,6 +25,7 @@ const viewResetBtn = document.getElementById("viewReset");
 const pointValuesToggleBtn = document.getElementById("pointValuesToggleBtn");
 const pressureLockBtn = document.getElementById("pressureLockBtn");
 const pointsViewBadge = document.getElementById("pointsViewBadge");
+const cycleModeSelect = document.getElementById("cycleModeSelect");
 
 const chart = createChart(svg);
 
@@ -218,10 +219,18 @@ let zoomY = 1;
 let valueViewMode = "actual";
 let currentIntersections = [];
 let pressureLockEnabled = false;
+let cycleMode = "manual";
+let pressureModeLowPbar = NaN;
+let pressureModeHighPbar = NaN;
+let manualPointsBackup = Array.from({ length: pointTarget }, () => null);
 
 function fmt(x, n = 3) {
   if (!Number.isFinite(x)) return "";
   return Number(x).toFixed(n);
+}
+
+function clonePoints(src) {
+  return Array.from({ length: pointTarget }, (_, i) => (src?.[i] ? { ...src[i] } : null));
 }
 
 function updateValueViewUi() {
@@ -241,8 +250,45 @@ function updateValueViewUi() {
 
 function updatePressureLockUi() {
   if (!pressureLockBtn) return;
-  pressureLockBtn.textContent = pressureLockEnabled ? "Pressure lock: On" : "Pressure lock: Off";
-  pressureLockBtn.classList.toggle("isLocked", pressureLockEnabled);
+  const disabled = cycleMode === "pressureOnly";
+  pressureLockBtn.disabled = disabled;
+  pressureLockBtn.textContent = disabled ? "Pressure lock: N/A" : pressureLockEnabled ? "Pressure lock: On" : "Pressure lock: Off";
+  pressureLockBtn.classList.toggle("isLocked", !disabled && pressureLockEnabled);
+}
+
+function updateCycleModeUi() {
+  if (cycleModeSelect) cycleModeSelect.value = cycleMode;
+  updatePressureLockUi();
+}
+
+function clearAllPoints() {
+  points = Array.from({ length: pointTarget }, () => null);
+}
+
+function setCycleMode(nextMode) {
+  const normalized = nextMode === "pressureOnly" ? "pressureOnly" : "manual";
+  if (cycleMode === normalized) return;
+  if (normalized === "pressureOnly") {
+    manualPointsBackup = clonePoints(points);
+    if (!Number.isFinite(pressureModeLowPbar) || !Number.isFinite(pressureModeHighPbar)) {
+      const ps = completePoints()
+        .map((p) => p.Pbar)
+        .filter((p) => Number.isFinite(p) && p > 0);
+      if (ps.length) {
+        pressureModeLowPbar = Math.min(...ps);
+        pressureModeHighPbar = Math.max(...ps);
+      }
+    }
+  }
+  cycleMode = normalized;
+  if (cycleMode === "manual") {
+    points = clonePoints(manualPointsBackup);
+    renderPoints();
+    validate();
+  } else {
+    applyPressureOnlyCycle();
+  }
+  updateCycleModeUi();
 }
 
 function pairedPressureIndex(i) {
@@ -378,6 +424,74 @@ function satAtP(Pbar, { clamp = false } = {}) {
     hL: a.hL * (1 - t) + b.hL * t,
     hV: a.hV * (1 - t) + b.hV * t,
   };
+}
+
+function buildPressureOnlyPoints(lowPbar, highPbar) {
+  const lowSat = satAtP(lowPbar);
+  const highSat = satAtP(highPbar);
+  if (!lowSat || !highSat) return null;
+  if (!Number.isFinite(lowSat.hV) || !Number.isFinite(highSat.hV) || !Number.isFinite(highSat.hL)) return null;
+
+  const p1 = {
+    Pbar: lowPbar,
+    h: lowSat.hV,
+    Tc: Number.isFinite(lowSat.TV ?? lowSat.T) ? (lowSat.TV ?? lowSat.T) - 273.15 : NaN,
+    x: 1,
+    s: NaN,
+    phase: "vap",
+  };
+  const p2 = {
+    Pbar: highPbar,
+    h: highSat.hV,
+    Tc: Number.isFinite(highSat.TV ?? highSat.T) ? (highSat.TV ?? highSat.T) - 273.15 : NaN,
+    x: 1,
+    s: NaN,
+    phase: "vap",
+  };
+  const p3 = {
+    Pbar: highPbar,
+    h: highSat.hL,
+    Tc: Number.isFinite(highSat.TL ?? highSat.T) ? (highSat.TL ?? highSat.T) - 273.15 : NaN,
+    x: 0,
+    s: NaN,
+    phase: "liq",
+  };
+  const p4 = {
+    Pbar: lowPbar,
+    h: p3.h,
+    Tc: NaN,
+    x: qualityFromPH(lowPbar, p3.h),
+    s: NaN,
+    phase: "auto",
+  };
+  return [p1, p2, p3, p4];
+}
+
+function applyPressureOnlyCycle() {
+  if (cycleMode !== "pressureOnly") return;
+  if (!Number.isFinite(pressureModeLowPbar) || !Number.isFinite(pressureModeHighPbar)) {
+    clearAllPoints();
+    renderPoints();
+    validate();
+    return;
+  }
+  if (pressureModeLowPbar <= 0 || pressureModeHighPbar <= 0 || pressureModeHighPbar <= pressureModeLowPbar) {
+    clearAllPoints();
+    renderPoints();
+    validate();
+    return;
+  }
+  const autoPoints = buildPressureOnlyPoints(pressureModeLowPbar, pressureModeHighPbar);
+  if (!autoPoints) {
+    clearAllPoints();
+    renderPoints();
+    validate();
+    return;
+  }
+  points = autoPoints;
+  renderPoints();
+  validate();
+  updatePointTemperature(3);
 }
 
 function phaseHintForPoint(Pbar, h) {
@@ -576,6 +690,7 @@ function setPointTarget(_n, { clear = false } = {}) {
   const oldPoints = points;
   points = Array.from({ length: pointTarget }, (_, i) => (clear ? null : oldPoints[i] ?? null));
   computeSeq = Array.from({ length: pointTarget }, (_, i) => (computeSeq[i] ?? 0));
+  manualPointsBackup = Array.from({ length: pointTarget }, (_, i) => manualPointsBackup[i] ?? null);
 
   renderPoints();
   validate();
@@ -587,7 +702,11 @@ function rebuildTable() {
   for (let i = 0; i < pointTarget; i++) {
     const tr = document.createElement("tr");
     const defaultPhase = i === 3 ? "2p" : "auto";
-    const p0 = points[i] || { Pbar: NaN, h: NaN, Tc: NaN, x: NaN, phase: defaultPhase };
+    let p0 = points[i] || { Pbar: NaN, h: NaN, Tc: NaN, x: NaN, phase: defaultPhase };
+    if (cycleMode === "pressureOnly" && !Number.isFinite(p0.Pbar)) {
+      if (i === 0) p0 = { ...p0, Pbar: pressureModeLowPbar };
+      else if (i === 1) p0 = { ...p0, Pbar: pressureModeHighPbar };
+    }
 
     const tdIdx = document.createElement("td");
     tdIdx.textContent = String(i + 1);
@@ -629,6 +748,15 @@ function rebuildTable() {
     inH.value = Number.isFinite(p0.h) ? fmt(p0.h, 2) : "";
 
     function updateFromInputs(source) {
+      if (cycleMode === "pressureOnly") {
+        if (source !== "p") return;
+        const Pbar = inP.value === "" ? NaN : Number(inP.value);
+        if (i === 0) pressureModeLowPbar = Pbar;
+        else if (i === 1) pressureModeHighPbar = Pbar;
+        applyPressureOnlyCycle();
+        updateCycleModeUi();
+        return;
+      }
       const Pbar = inP.value === "" ? NaN : Number(inP.value);
       const Tc = inT.value === "" ? NaN : Number(inT.value);
       const hIn = inH.value === "" ? NaN : Number(inH.value);
@@ -773,6 +901,16 @@ function rebuildTable() {
 
       renderPoints();
       validate();
+    }
+
+    if (cycleMode === "pressureOnly") {
+      inP.disabled = false;
+      inP.readOnly = i > 1;
+      inT.disabled = true;
+      sel.disabled = true;
+      inH.disabled = true;
+      if (i === 0) inP.placeholder = "low bar";
+      if (i === 1) inP.placeholder = "high bar";
     }
 
     inP.addEventListener("change", () => updateFromInputs("p"));
@@ -1257,6 +1395,7 @@ async function regenerateChart() {
     }
 
     drawChartFromSat(sat);
+    if (cycleMode === "pressureOnly") applyPressureOnlyCycle();
   } finally {
     if (mySeq === chartGenSeq) setChartLoading(false);
   }
@@ -1320,13 +1459,21 @@ async function initFluidSelect() {
 }
 
 function clearPoints() {
-  points = Array.from({ length: pointTarget }, () => null);
+  clearAllPoints();
+  if (cycleMode === "pressureOnly") {
+    pressureModeLowPbar = NaN;
+    pressureModeHighPbar = NaN;
+  } else {
+    manualPointsBackup = clonePoints(points);
+  }
+  updateCycleModeUi();
   renderPoints();
   validate();
   setStatus(["Cleared."], "info");
 }
 
 function addPoint(p) {
+  if (cycleMode === "pressureOnly") return;
   if (!Number.isFinite(p.Pbar) || !Number.isFinite(p.h) || p.Pbar <= 0) return;
 
   const filled = completePoints().length;
@@ -1347,6 +1494,7 @@ function addPoint(p) {
 }
 
 function updatePointFromDrag(idx, p) {
+  if (cycleMode === "pressureOnly") return;
   if (idx < 0 || idx >= points.length) return;
 
   const phase = points[idx]?.phase || (idx === 3 ? "2p" : "auto");
@@ -1365,11 +1513,15 @@ function setPanelOpen(open) {
 
 function wireInteractions() {
   clearBtn?.addEventListener("click", clearPoints);
+  cycleModeSelect?.addEventListener("change", () => {
+    setCycleMode(cycleModeSelect.value);
+  });
   pointValuesToggleBtn?.addEventListener("click", () => {
     valueViewMode = valueViewMode === "intersections" ? "actual" : "intersections";
     renderPoints();
   });
   pressureLockBtn?.addEventListener("click", () => {
+    if (cycleMode === "pressureOnly") return;
     pressureLockEnabled = !pressureLockEnabled;
     if (pressureLockEnabled) normalizePressureLocks();
     renderPoints();
@@ -1533,6 +1685,7 @@ function wireInteractions() {
   svg.addEventListener(
     "pointerdown",
     (ev) => {
+    if (cycleMode === "pressureOnly") return;
     if (pinch.active || pinch.pts.size >= 2) return;
     const idxStr = ev.target?.getAttribute?.("data-pt-index");
     if (idxStr == null) return;
@@ -1581,6 +1734,7 @@ function wireInteractions() {
   svg.addEventListener("pointercancel", endDrag);
 
   svg.addEventListener("click", (ev) => {
+    if (cycleMode === "pressureOnly") return;
     // ignore click following a drag/gesture, or clicking an existing point
     if (drag.moved || pinch.moved || ev.target?.getAttribute?.("data-pt-index") != null) {
       drag.moved = false;
@@ -1614,6 +1768,7 @@ async function main() {
   propModel = await createPropertyModel();
   setStatus(["Ready."], "info");
   wireInteractions();
+  updateCycleModeUi();
   updateValueViewUi();
   updatePressureLockUi();
   await regenerateChart();
