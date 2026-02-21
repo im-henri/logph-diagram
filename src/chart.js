@@ -465,7 +465,12 @@ export function createChart(svg) {
         const text = el("text", { class: "valueLabel" });
 
         const pbar = Number.isFinite(p.Pbar) ? p.Pbar : Math.pow(10, p.logP);
-        const lines = [`I${i + 1} (${p.boundary || "sat"})`, `p=${pbar.toFixed(3)} bar`, `h=${p.h.toFixed(2)} kJ/kg`];
+        const lines = [
+          `I${i + 1} (${p.boundary || "sat"})`,
+          `p=${pbar.toFixed(3)} bar`,
+          Number.isFinite(p.Tc) ? `T=${p.Tc.toFixed(2)} °C` : "T=?",
+          `h=${p.h.toFixed(2)} kJ/kg`,
+        ];
         let dy = 0;
         for (const ln of lines) {
           const ts = el("tspan", { dy });

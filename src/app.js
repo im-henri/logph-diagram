@@ -940,7 +940,8 @@ function renderIntersectionInfo() {
 
   const rows = currentIntersections.map((p, i) => {
     const side = p.boundary === "liq" ? "sat(liq)" : p.boundary === "vap" ? "sat(vap)" : "sat";
-    return `<div class="mono">I${i + 1} (${side}): p=${p.Pbar.toFixed(3)} bar, h=${p.h.toFixed(2)} kJ/kg</div>`;
+    const tText = Number.isFinite(p.Tc) ? `${p.Tc.toFixed(2)} °C` : "?";
+    return `<div class="mono">I${i + 1} (${side}): p=${p.Pbar.toFixed(3)} bar, T=${tText}, h=${p.h.toFixed(2)} kJ/kg</div>`;
   });
   intersectionInfoEl.innerHTML = [`<div><b>Intersections</b> <span class="muted">(read-only)</span></div>`, ...rows].join("");
 }
@@ -1001,10 +1002,15 @@ function computeCycleIntersections(pts) {
       for (let j = 0; j < edge.length - 1; j++) {
         const hit = segmentIntersectionPH(a, b, edge[j], edge[j + 1]);
         if (!hit) continue;
+        const Pbar = Math.pow(10, hit.logP);
+        const sat = satAtP(Pbar, { clamp: true });
+        const TK =
+          boundary.boundary === "liq" ? sat?.TL ?? sat?.T : boundary.boundary === "vap" ? sat?.TV ?? sat?.T : sat?.T;
         intersections.push({
           h: hit.h,
           logP: hit.logP,
-          Pbar: Math.pow(10, hit.logP),
+          Pbar,
+          Tc: Number.isFinite(TK) ? TK - 273.15 : NaN,
           segmentIndex: i,
           segmentT: hit.t,
           boundary: boundary.boundary,
